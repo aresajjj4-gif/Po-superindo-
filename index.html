@@ -48,15 +48,17 @@ td input.q{padding:2px 0}
 details.card summary{cursor:pointer}
 th{min-width:26px}
 input.sel{width:15px!important;height:15px;padding:0!important;border:0!important;vertical-align:middle;margin:0 6px 0 0}
+td.cs{text-align:center;font-weight:700}
+tr.ft td{border-top:2px solid var(--bd)}
 </style>
 </head>
 <body>
 <div class="w">
 <h1>Matriks PO Sayur Superindo</h1>
-<p class="s">Upload PO tiap toko (PDF / Excel / CSV / foto). Qty otomatis masuk ke kolom toko dan baris sayur yang sesuai.</p>
+<p class="s">Upload PO tiap toko (PDF / Excel / CSV). Qty otomatis masuk ke kolom toko dan baris sayur yang sesuai.</p>
 <div class="card">
 <div id="dz">Klik atau tarik file PO ke sini (boleh banyak sekaligus)</div>
-<input id="fi" type="file" multiple accept=".pdf,.xlsx,.xls,.csv,.jpg,.jpeg,.png,.webp" hidden>
+<input id="fi" type="file" multiple accept=".pdf,.xlsx,.xls,.csv,.txt" hidden>
 <div class="chips" id="chips"></div>
 </div>
 <div class="card" id="fc" hidden><b>File diproses</b><div id="fl"></div></div>
@@ -95,6 +97,8 @@ const lab2=(s,k)=>[s[0],s[2]].filter(Boolean).join(" - ")||"Kolom "+(k+1);
 const cmp=(a,b)=>a.nm.localeCompare(b.nm,"id",{sensitivity:"base",numeric:true});
 function sortItems(){const f=IT.filter(i=>i.nm.trim()),e=IT.filter(i=>!i.nm.trim());f.sort(cmp);IT.splice(0,IT.length,...f,...e)}
 function padRows(){while(IT.length<60)IT.push(mk("",""))}
+const q0=(i,s)=>parseFloat(String(get(i,s)).replace(",","."))||0,nTypes=s=>IT.filter(i=>q0(i,s)>0).length,nAll=()=>IT.filter(i=>ST.some(s=>q0(i,s)>0)).length;
+function updCounts(){const tb=document.getElementById("tb");tb.querySelectorAll("td.cs").forEach(c=>{const s=ST.find(s=>s[3]==c.dataset.cs);c.textContent=s?nTypes(s):""});const t=tb.querySelector("td[data-ct]");if(t)t.textContent=nAll()}
 function putItem(nm,un){const e=IT.find(i=>!i.nm.trim()&&tot(i)==="");if(e){e.nm=nm;e.un=un;e.g=grp(nm);return e}const it=mk(nm,un);IT.push(it);return it}
 function save(){let ok=true;try{localStorage.setItem(KEY,JSON.stringify({ST,IT:IT.map(i=>({id:i.id,nm:i.nm,un:i.un})),uid,v:5,D,files:files.map(f=>({name:f.name,hits:f.hits,miss:f.miss,store:f.store,err:f.err}))}))}catch(e){ok=false}
  const e=document.getElementById("sv");if(e){const d=new Date();e.textContent=ok?`Tersimpan otomatis di browser ini (${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")})`:"Penyimpanan browser tidak tersedia. Unduh PDF sebelum menutup halaman."}}
@@ -115,31 +119,45 @@ function qty(line){
  r=t.match(/\d+(?:[.,]\d+)?/);return r?num(r[0]):null;
 }
 const UNITS_RE=/^(kg|pack|pak|pck|ikat|pcs|bks|bh|btl|box|ctn|dus|pot|tray|sisir|buah|biji|ltr|liter)$/i;
-async function pdfImgs(pdf){
- const out=[];
- for(let p=1;p<=Math.min(pdf.numPages,4);p++){
-  const pg=await pdf.getPage(p),vp=pg.getViewport({scale:1.6}),cv=document.createElement("canvas");
-  cv.width=vp.width;cv.height=vp.height;
-  await pg.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise;
-  out.push(await new Promise(r=>cv.toBlob(r,"image/jpeg",.85)));
+function pdesc(t){
+ t=t.replace(/\s+/g," ").trim();let name=t,unit="";
+ const m=t.match(/^(.*?)\s*\(\s*([A-Za-z]+)[^)]*\)/);
+ if(m&&UNITS_RE.test(m[2])){name=m[1];unit=m[2]}
+ else{const w=t.split(" "),k=w.findIndex((x,j)=>j>0&&UNITS_RE.test(x.replace(/[^A-Za-z]/g,"")));if(k>0){name=w.slice(0,k).join(" ");unit=w[k].replace(/[^A-Za-z]/g,"")}}
+ name=name.replace(/^[\s\-\u2013]+|[\s\-\u2013:,;]+$/g,"");
+ return{name,unit:UNITS_RE.test(unit)?unit:"Pcs"};
+}
+function xlsFromRows(R){
+ const cell=v=>String(v==null?"":v).replace(/\s+/g," ").trim(),out=[];
+ const pure=t=>/^\d+([.,]\d+)?$/.test(t),price=t=>/^\d{1,3}([.,]\d{3})+([.,]\d{1,2})?$/.test(t);
+ const rows=R.map(r=>r.map(cell)),qre=/^(qty|quantity|kuantitas|qty order|qty pesan|jml pesan|jumlah pesan|pesanan|order)$/i;
+ let hi=rows.findIndex(r=>r.some(c=>qre.test(c)));
+ if(hi<0)hi=rows.findIndex(r=>r.some(c=>/^(jml|jumlah)$/i.test(c))&&r.some(c=>/(nama|deskripsi|barang|sayur|item|produk)/i.test(c)));
+ if(hi>=0){
+  const H=rows[hi],ui=H.findIndex(c=>/^(satuan|sat\.?|unit|uom)$/i.test(c));
+  let qi=H.findIndex(c=>qre.test(c));if(qi<0)qi=H.findIndex(c=>/^(jml|jumlah)$/i.test(c));
+  let ni=H.findIndex(c=>/(deskripsi|nama|barang|sayur|item|produk)/i.test(c));
+  if(ni<0){let bc=-1;H.forEach((_,j)=>{const n=rows.slice(hi+1).filter(r=>/[A-Za-z]{3}/.test(r[j]||"")).length;if(n>bc){bc=n;ni=j}})}
+  rows.slice(0,hi+1).forEach(r=>{const t=r.filter(Boolean).join(" ");if(t)out.push(t)});
+  let seen=0;
+  for(const r of rows.slice(hi+1)){
+   const first=r.find(Boolean)||"";if(!first)continue;
+   if(seen&&/^(total|keterangan|catatan|grand)/i.test(first)){out.push(r.filter(Boolean).join(" "));continue}
+   const nm=r[ni]||"",qv=parseFloat((r[qi]||"").replace(",","."));
+   if(!/[A-Za-z]{3}/.test(nm)||!(qv>0))continue;
+   const d=pdesc(nm),us=((ui>=0&&r[ui])||"").split("/")[0].trim(),un=UNITS_RE.test(us)?us:d.unit;
+   if(d.name){out.push(`${d.name} ${qv} ${un}`);seen++}
+  }
+  return out;
  }
+ rows.forEach(r=>{const t=r.filter(Boolean);if(!t.length)return;
+  const nm=t.find(x=>/[A-Za-z]{3}/.test(x)&&!UNITS_RE.test(x)),qv=t.find(x=>pure(x)&&!price(x)),un=t.find(x=>UNITS_RE.test(x.split("/")[0].trim()));
+  if(nm&&qv)out.push(`${pdesc(nm).name} ${qv} ${un?un.split("/")[0].trim():pdesc(nm).unit}`);else out.push(t.join(" "))});
  return out;
 }
-async function ocrLines(blobs){
- const sample=typeof claude!=="undefined"?await claude.use("sample"):null;
- const lim=sample?await sample.limits():null;
- if(!sample||!lim||!lim.images)throw new Error("Pembacaan foto hanya bisa saat halaman dibuka lewat claude.ai");
- const prompt='Ini foto atau scan Purchase Order sayuran. Baca HANYA nama barang dan QTY pada tabel PO. Abaikan semua kolom lain (PLU, harga, discount, PPN, jumlah, FR, Pot, Bns, kemasan), baris DISC, alamat, catatan, tanda tangan, dan tulisan kecil. Jika ada tulisan setelah satuan (misalnya "(KG/1000)" atau "150GR [CTN/10]"), jangan dibaca; satuan cukup KG, PACK, IKAT, PCS, dan sejenisnya. Balas HANYA JSON tanpa teks lain berbentuk {"toko":"nama atau kode toko tujuan pengiriman jika terlihat, jika tidak ada kosongkan","items":[{"nama":"nama barang tanpa nomor urut dan tanpa kode PLU","qty":angka,"satuan":"satuan"}]}.';
- const r=await sample.json(prompt,{images:blobs.slice(0,(lim.images.maxCount||4)),modelTier:"default"});
- const out=[];
- if(r&&r.toko)out.push("Harap dikirim ke: "+r.toko);
- ((r&&r.items)||[]).forEach(i=>{const q=parseFloat(String(i.qty).replace(",",".")),nm=String(i.nama||"").replace(/\s+/g," ").trim();if(!nm||!isFinite(q))return;
-  const s=String(i.satuan||"").trim().split("/")[0].trim();out.push(`${nm} ${q} ${UNITS_RE.test(s)?s:"Pcs"}`)});
- return out;
-}
+function xlsLines(wb){const out=[];wb.SheetNames.forEach(n=>{out.push(...xlsFromRows(XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:""})))});return out}
 async function lines(f){
  const ext=f.name.split(".").pop().toLowerCase(),buf=await f.arrayBuffer(),out=[];
- if(/^(jpe?g|png|webp|gif)$/.test(ext))return await ocrLines([f]);
  if(ext==="txt")return(new TextDecoder().decode(buf)).split(/\r?\n/).filter(l=>l.trim());
  if(ext==="pdf"){
   pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -177,10 +195,10 @@ async function lines(f){
     if(!t)return;const d=parseDesc(t);if(d.name)syn.push(`${d.name} ${q.s} ${d.unit}`)});
    old.forEach(r=>{if(!inReg(r.y))out.push(r.t)});syn.forEach(s=>out.push(s));
   }
-  if(txtN<5)return await ocrLines(await pdfImgs(pdf));
+  if(txtN<5)throw new Error("PDF ini tidak berisi teks (kemungkinan hasil scan atau foto). Gunakan PDF asli atau file Excel");
  }else{
   const wb=XLSX.read(buf,{type:"array"});
-  wb.SheetNames.forEach(n=>XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:""}).forEach(r=>out.push(r.join(" "))));
+  out.push(...xlsLines(wb));
  }
  return out.filter(l=>l.trim());
 }
@@ -234,8 +252,9 @@ function renderMatrix(){
  let h=`<tr><th style="left:0;z-index:3"><input type="checkbox" id="sa" class="sel">NAMA SAYURAN &amp; SATUAN</th>${ST.map(s=>`<th title="${esc(s[2])}">${esc(s[0])}</th>`).join("")}<th>JMLH</th></tr>`;
  IT.forEach((i,k)=>{h+=`<tr><td class="n"><input type="checkbox" class="sel" data-id="${i.id}" ${SEL.has(i.id)?"checked":""}>${k+1}. <input class="nm" data-id="${i.id}" data-k="${k}" data-f="nm" value="${esc(i.nm)}" style="width:${Math.max(8,i.nm.length)+1}ch"> (<input class="un" data-id="${i.id}" data-k="${k}" data-f="un" value="${esc(i.un)}" style="width:${Math.max(3,i.un.length)+1}ch">) <button class="x" data-del="${k}" title="Hapus sayur">\u00d7</button></td>${ST.map(s=>{const v=String(get(i,s));return `<td><input class="q" data-i="${i.id}" data-s="${s[3]}" value="${esc(v)}" style="width:${Math.max(v.length,s[0].length,2)+.8}ch"></td>`}).join("")}<td class="tot" data-t="${i.id}">${tot(i)}</td></tr>`});
  if(!IT.length)h+=`<tr><td class="n" colspan="${ST.length+2}" style="text-align:center;white-space:normal;padding:14px">Belum ada sayur. Klik + Tambah sayur, atau pakai Tambah banyak sayur sekaligus.</td></tr>`;
+ h+=`<tr class="ft"><td class="n"><b>JMLH SYR</b></td>${ST.map(s=>`<td class="cs" data-cs="${s[3]}">${nTypes(s)}</td>`).join("")}<td class="tot" data-ct="1">${nAll()}</td></tr>`;
  const tb=$("tb");tb.innerHTML=h;
- tb.querySelectorAll("input.q").forEach(x=>x.oninput=()=>{const it=IT.find(i=>i.id==x.dataset.i),s=ST.find(s=>s[3]==x.dataset.s);set(it,s,x.value);tb.querySelector(`[data-t="${it.id}"]`).textContent=tot(it);x.style.width=Math.max(x.value.length,s[0].length,2)+.8+"ch";save()});
+ tb.querySelectorAll("input.q").forEach(x=>x.oninput=()=>{const it=IT.find(i=>i.id==x.dataset.i),s=ST.find(s=>s[3]==x.dataset.s);set(it,s,x.value);tb.querySelector(`[data-t="${it.id}"]`).textContent=tot(it);x.style.width=Math.max(x.value.length,s[0].length,2)+.8+"ch";updCounts();save()});
  tb.querySelectorAll("input.nm,input.un").forEach(x=>x.oninput=()=>{const it=IT[x.dataset.k];it[x.dataset.f]=x.value;if(x.dataset.f==="nm")it.g=grp(x.value);x.style.width=Math.max(x.className==="nm"?8:3,x.value.length)+1+"ch";save()});
  tb.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{IT.splice(+b.dataset.del,1);SEL.clear();render()});
  tb.querySelectorAll("input.nm").forEach(x=>x.onchange=()=>setTimeout(resort,0));
@@ -289,7 +308,7 @@ function makePdf(){
  let cwid=(use-nn-nw-jw)/N;
  if(cwid<18){nw=Math.max(80,nw-(18-cwid)*N);cwid=(use-nn-nw-jw)/N}
  const cwd=Math.max(6,Math.min(cwid,40)),x0=(W-(nn+nw+jw+cwd*N))/2;
- const n=Math.ceil(L.length/P),rh=Math.min(10,(H-61)/(Math.min(P,L.length)+2)),pages=[];
+ const n=Math.ceil(L.length/P),rh=Math.min(10,(H-61)/(Math.min(P,L.length)+3)),pages=[];
  const cell=(x,top,w,h,s,q={})=>{let c="";
   if(q.fill)c+=`${q.fill} rg ${f(x)} ${f(top-h)} ${f(w)} ${f(h)} re f\n`;
   c+=`0.5 w 0.36 0.55 0.75 RG ${f(x)} ${f(top-h)} ${f(w)} ${f(h)} re S\n`;
@@ -309,6 +328,7 @@ function makePdf(){
    c+=cell(x,top,nn,rh,String(a+r+1),{fill})+cell(x+nn,top,nw,rh,lab(it),{fill,left:1});x+=nn+nw;
    ST.forEach(s=>{c+=cell(x,top,cwd,rh,String(get(it,s)),{fill});x+=cwd});
    c+=cell(x,top,jw,rh,String(tot(it)),{fill,b:1});top-=rh});
+  if(p===n-1){const fl="0.85 0.91 0.97";let x=x0;c+=cell(x,top,nn+nw,rh,"JMLH SYR",{fill:fl,b:1});x+=nn+nw;ST.forEach(s=>{c+=cell(x,top,cwd,rh,String(nTypes(s)),{fill:fl,b:1});x+=cwd});c+=cell(x,top,jw,rh,String(nAll()),{fill:fl,b:1})}
   pages.push(c);
  }
  return buildPdf(pages,W,H);
